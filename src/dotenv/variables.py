@@ -14,6 +14,25 @@ _posix_variable: Pattern[str] = re.compile(
     re.VERBOSE,
 )
 
+# A run of backslashes immediately followed by a dollar sign.
+_escaped_dollar: Pattern[str] = re.compile(r"\\+\$")
+
+
+def _decode_escaped_dollars(value: str) -> str:
+    r"""Decode backslash-escaped dollars in literal text.
+
+    A backslash is special only where it directly precedes a `$`: each `\\`
+    pair collapses to a single literal backslash, and an odd trailing
+    backslash escapes the `$`, making it a literal dollar sign. Backslashes
+    in any other position (e.g. in Windows paths) are left untouched.
+    """
+
+    def decode_match(match: "re.Match[str]") -> str:
+        backslashes = len(match.group(0)) - 1
+        return "\\" * (backslashes // 2) + "$"
+
+    return _escaped_dollar.sub(decode_match, value)
+
 
 class Atom(metaclass=ABCMeta):
     def __ne__(self, other: object) -> bool:
@@ -75,12 +94,32 @@ def parse_variables(value: str) -> Iterator[Atom]:
         name = match["name"]
         default = match["default"]
 
-        if start > cursor:
-            yield Literal(value=value[cursor:start])
+        # Count the backslashes immediately preceding the `$`. An odd run
+        # means the `$` itself is escaped, so the whole `${...}` is literal
+        # text; an even run collapses to half as many literal backslashes and
+        # the variable is interpolated as usual.
+        backslashes = 0
+        while (
+            start - backslashes - 1 >= cursor
+            and value[start - backslashes - 1] == "\\"
+        ):
+            backslashes += 1
 
-        yield Variable(name=name, default=default)
+        if start - backslashes > cursor:
+            yield Literal(
+                value=_decode_escaped_dollars(value[cursor : start - backslashes])
+            )
+
+        if backslashes % 2 == 1:
+            yield Literal(
+                value="\\" * (backslashes // 2) + "$" + match.group(0)[1:]
+            )
+        else:
+            if backslashes:
+                yield Literal(value="\\" * (backslashes // 2))
+            yield Variable(name=name, default=default)
         cursor = end
 
     length = len(value)
     if cursor < length:
-        yield Literal(value=value[cursor:length])
+        yield Literal(value=_decode_escaped_dollars(value[cursor:length]))

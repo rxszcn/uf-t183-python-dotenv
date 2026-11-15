@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import pathlib
+import re
 import stat
 import sys
 import tempfile
@@ -17,6 +18,32 @@ from .variables import parse_variables
 StrPath = Union[str, "os.PathLike[str]"]
 
 logger = logging.getLogger(__name__)
+
+# A run of backslashes (possibly empty) followed by a `$`, plus the `{` that
+# may open a `${...}` variable reference.
+_dollar_run = re.compile(r"(\\*)\$(\{?)")
+
+
+def _escape_value_dollars(value: str) -> str:
+    r"""Encode the dollars in a literal value for the interpolation layer.
+
+    This is the exact inverse of the read-side escape protocol: a `$` that
+    would start a `${...}` reference is escaped as `\$`, and a backslash run
+    directly before a `$` is doubled (with the dollar escaped) so that the
+    read-side collapse of `\\` pairs restores the original run. A lone `$`
+    that cannot start a reference is left as is.
+    """
+
+    def encode_match(match: "re.Match[str]") -> str:
+        backslashes = match.group(1)
+        brace = match.group(2)
+        if backslashes:
+            return "\\" * (2 * len(backslashes) + 1) + "$" + brace
+        if brace:
+            return "\\${"
+        return match.group(0)
+
+    return _dollar_run.sub(encode_match, value)
 
 
 def _load_dotenv_disabled() -> bool:
@@ -251,14 +278,18 @@ def set_key(
     )
 
     if quote:
-        # The single-quoted-value parser decodes `\\` and `\'`, so both have to
-        # be escaped here for the value to survive a write/read round-trip.
-        # Backslashes first, otherwise the backslash added by the quote
-        # escaping would be escaped in turn.
-        escaped = value_to_set.replace("\\", "\\\\").replace("'", "\\'")
+        # Two escape layers compose here. First, dollars are encoded for the
+        # interpolation layer so that a literal `$` (or a backslash run
+        # before one) is not reinterpreted as a variable reference when the
+        # value is read back. Then, since the single-quoted-value parser
+        # decodes `\\` and `\'`, both have to be escaped for the value to
+        # survive a write/read round-trip. The interpolation encoding comes
+        # first, otherwise the backslashes it adds would be doubled again.
+        escaped = _escape_value_dollars(value_to_set)
+        escaped = escaped.replace("\\", "\\\\").replace("'", "\\'")
         value_out = f"'{escaped}'"
     else:
-        value_out = value_to_set
+        value_out = _escape_value_dollars(value_to_set)
     if export:
         line_out = f"export {key_to_set}={value_out}\n"
     else:

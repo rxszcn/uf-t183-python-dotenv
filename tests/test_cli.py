@@ -184,6 +184,34 @@ def test_set_non_existent_file(cli):
     assert (result.exit_code, result.output) == (1, "")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "${HOME}",
+        "$HOME",
+        "100$",
+        "\\$",
+        "\\${HOME}",
+        "a$b${c}",
+    ],
+)
+def test_set_get_round_trip_dollars(cli, dotenv_path, value):
+    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "set", "a", value])
+    assert result.exit_code == 0
+
+    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "get", "a"])
+
+    assert (result.exit_code, result.output) == (0, value + "\n")
+
+
+def test_get_escaped_dollar_literal(cli, dotenv_path):
+    dotenv_path.write_text("a=\\${b}\n")
+
+    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "get", "a"])
+
+    assert (result.exit_code, result.output) == (0, "${b}\n")
+
+
 def test_set_no_file(cli):
     result = cli.invoke(dotenv_cli, ["--file", "nx_file", "set"])
 

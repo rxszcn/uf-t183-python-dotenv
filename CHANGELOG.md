@@ -10,6 +10,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Add support for Python 3.15.
+- Add an escape protocol for literal dollar signs: `\$` now reads as a literal `$` and suppresses interpolation in unquoted, single-quoted and double-quoted values alike. A backslash is special only directly before a `$`: `\\` pairs collapse to one backslash there, and backslashes elsewhere (e.g. Windows paths) are untouched. `set_key` and `dotenv set` escape dollars when writing, so values containing `$` or `${...}` survive a write/read round-trip instead of being interpolated on read.
 
 ### Fixed
 

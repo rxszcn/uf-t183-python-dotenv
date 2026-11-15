@@ -232,6 +232,15 @@ values defined in the following list:
 - Default value, if provided.
 - Empty string.
 
+To write a literal dollar sign instead of a variable reference, escape it
+with a backslash: `\$`. The escape works in unquoted, single-quoted and
+double-quoted values alike (quotes do not prevent interpolation), e.g.
+`PRICE=\${CURRENCY}5` reads as the literal `${CURRENCY}5`. A backslash is
+special only directly before a `$`: `\\` pairs collapse to a single
+backslash there, and backslashes anywhere else (e.g. in Windows paths such
+as `C:\Users`) are left untouched. `set_key` and `dotenv set` apply this
+escaping automatically, so values they write read back unchanged.
+
 ## Related Projects
 
 - [environs](https://github.com/sloria/environs)

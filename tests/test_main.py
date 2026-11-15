@@ -44,6 +44,11 @@ def test_set_key_no_file(tmp_path):
         ("", "a", "b\\c", (True, "a", "b\\c"), "a='b\\\\c'\n"),
         ("", "a", "b\\", (True, "a", "b\\"), "a='b\\\\'\n"),
         ("", "a", "b\\'c", (True, "a", "b\\'c"), "a='b\\\\\\'c'\n"),
+        # Dollars are escaped for the interpolation layer, then backslashes
+        # for the single-quoted-value parser.
+        ("", "a", "${b}", (True, "a", "${b}"), "a='\\\\${b}'\n"),
+        ("", "a", "$b", (True, "a", "$b"), "a='$b'\n"),
+        ("", "a", "\\$", (True, "a", "\\$"), "a='\\\\\\\\\\\\$'\n"),
     ],
 )
 def test_set_key(dotenv_path, before, key, value, expected, after):
@@ -71,6 +76,17 @@ def test_set_key(dotenv_path, before, key, value, expected, after):
         "a\\nb",
         "plain",
         "",
+        # Dollars: literal `${...}` references, bare dollars, and dollars
+        # combined with backslashes all survive a write/read round-trip.
+        "${HOME}",
+        "$HOME",
+        "$",
+        "100$",
+        "price is $5",
+        "\\$",
+        "\\\\$",
+        "\\${HOME}",
+        "a$b${c}\\$",
     ],
 )
 def test_set_key_round_trips(dotenv_path, value):
@@ -929,6 +945,61 @@ def test_dotenv_values_file_stream(dotenv_path):
         result = dotenv.dotenv_values(stream=f)
 
     assert result == {"a": "b"}
+
+
+@pytest.mark.parametrize(
+    "string,expected",
+    [
+        # The six common ways to write a value containing `${...}`. The
+        # unescaped forms interpolate in every quoting context (single
+        # quotes deliberately do not prevent interpolation); only the
+        # backslash-escaped forms reach the literal value.
+        ("a=${B}", "c"),
+        ("a=\"${B}\"", "c"),
+        ("a='${B}'", "c"),
+        ("a=\\${B}", "${B}"),
+        ("a=\"\\${B}\"", "${B}"),
+        ("a='\\${B}'", "${B}"),
+    ],
+)
+def test_dotenv_values_dollar_escaping_reachability(string, expected):
+    # Uppercase name: Windows uppercases keys set through os.environ.
+    with mock.patch.dict(os.environ, {"B": "c"}, clear=True):
+        result = dotenv.dotenv_values(stream=io.StringIO(string))
+
+    assert result == {"a": expected}
+
+
+@pytest.mark.parametrize(
+    "string,expected",
+    [
+        # An odd backslash run escapes the dollar; an even run collapses
+        # to half as many literal backslashes and interpolation proceeds.
+        ("a=\\${B}", "${B}"),
+        ("a=\\\\${B}", "\\c"),
+        ("a=\\\\\\${B}", "\\${B}"),
+        # The escape works in literal text, not only before `${...}`.
+        ("a=\\$", "$"),
+        ("a=\\$B", "$B"),
+        ("a=x\\$y", "x$y"),
+        ("a=\\\\$", "\\$"),
+        # A backslash not directly before a `$` is left untouched.
+        ("a=C:\\Users", "C:\\Users"),
+        ("a=\\\\server\\share", "\\\\server\\share"),
+    ],
+)
+def test_dotenv_values_escaped_dollar(string, expected):
+    with mock.patch.dict(os.environ, {"B": "c"}, clear=True):
+        result = dotenv.dotenv_values(stream=io.StringIO(string))
+
+    assert result == {"a": expected}
+
+
+def test_dotenv_values_escaped_dollar_no_interpolation():
+    with mock.patch.dict(os.environ, {"B": "c"}, clear=True):
+        result = dotenv.dotenv_values(stream=io.StringIO("a=\\${B}"), interpolate=False)
+
+    assert result == {"a": "\\${B}"}
 
 
 @pytest.mark.parametrize(
